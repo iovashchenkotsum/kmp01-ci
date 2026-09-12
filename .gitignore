@@ -1,0 +1,16 @@
+# IDE
+.idea/
+*.iml
+.kotlin/
+# Gradle и сборка
+.gradle/
+build/
+local.properties
+captures/
+# iOS
+iosApp/iosApp.xcworkspace/xcuserdata/
+iosApp/Pods/
+*.xcuserstate
+# ОС
+.DS_Store
+Thumbs.db
