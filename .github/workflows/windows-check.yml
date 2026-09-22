@@ -51,10 +51,10 @@ jobs:
 
           fun todayJava(): String = java.util.Date().toString()
           "@ | Set-Content shared/src/commonMain/kotlin/ru/kmpcourse/kmp01/NegativeExample.kt
-      - name: compileDebugKotlinAndroid — соберётся ли Android при Java в общем коде
+      - name: compileAndroidMain — соберётся ли Android при Java в общем коде
         shell: pwsh
         continue-on-error: true
-        run: .\gradlew.bat :shared:compileDebugKotlinAndroid --console=plain 2>&1 | Tee-Object -FilePath android.log; "EXIT=$LASTEXITCODE" | Tee-Object -Append android.log
+        run: .\gradlew.bat :shared:compileAndroidMain --console=plain 2>&1 | Tee-Object -FilePath android.log; "EXIT=$LASTEXITCODE" | Tee-Object -Append android.log
       - name: compileCommonMainKotlinMetadata — а общий код
         shell: pwsh
         continue-on-error: true
@@ -62,7 +62,7 @@ jobs:
       - name: Итог
         shell: pwsh
         run: |
-          "compileDebugKotlinAndroid: " + (Select-String -Path android.log -Pattern "^EXIT=").Line
+          "compileAndroidMain: " + (Select-String -Path android.log -Pattern "^EXIT=").Line
           "compileCommonMainKotlinMetadata: " + (Select-String -Path metadata.log -Pattern "^EXIT=").Line
           Select-String -Path android.log, metadata.log -Pattern "^e: |Unresolved|error:" | ForEach-Object { $_.Line }
       - uses: actions/upload-artifact@v4
