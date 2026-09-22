@@ -1,0 +1,141 @@
+# Разовая проверка start-1 на Windows x86 (В-8, вариант г). Запускается вручную: Actions → Windows check → Run workflow.
+name: Windows check
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci-windows-check]
+
+jobs:
+  baseline:
+    name: 1. Холодная синхронизация, сборка, тесты
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Версии
+        shell: pwsh
+        run: |
+          java -version
+          Get-ComputerInfo | Select-Object OsName, OsArchitecture, CsTotalPhysicalMemory
+      - name: assembleDebug (холодный старт, с таймером)
+        shell: pwsh
+        run: |
+          $t = Measure-Command { .\gradlew.bat :androidApp:assembleDebug --no-daemon --console=plain 2>&1 | Tee-Object -FilePath build-android.log }
+          "assembleDebug: $([int]$t.TotalSeconds) с" | Tee-Object -FilePath timing.txt
+      - name: Предупреждения об отключённых таргетах
+        shell: pwsh
+        run: Select-String -Path build-android.log -Pattern "disabled|not supported|Kotlin/Native" | ForEach-Object { $_.Line }
+      - name: testAndroidHostTest (тёплый)
+        shell: pwsh
+        run: |
+          $t = Measure-Command { .\gradlew.bat :shared:testAndroidHostTest --console=plain 2>&1 | Tee-Object -FilePath test.log }
+          "testAndroidHostTest: $([int]$t.TotalSeconds) с" | Tee-Object -Append -FilePath timing.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: baseline-logs, path: "*.log\ntiming.txt" }
+
+  common-java:
+    name: 2. java.util.Date в commonMain
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Вставить java.util.Date в commonMain
+        shell: pwsh
+        run: |
+          @"
+          package ru.kmpcourse.kmp01
+
+          fun todayJava(): String = java.util.Date().toString()
+          "@ | Set-Content shared/src/commonMain/kotlin/ru/kmpcourse/kmp01/NegativeExample.kt
+      - name: compileDebugKotlinAndroid — соберётся ли Android при Java в общем коде
+        shell: pwsh
+        continue-on-error: true
+        run: .\gradlew.bat :shared:compileDebugKotlinAndroid --console=plain 2>&1 | Tee-Object -FilePath android.log; "EXIT=$LASTEXITCODE" | Tee-Object -Append android.log
+      - name: compileCommonMainKotlinMetadata — а общий код
+        shell: pwsh
+        continue-on-error: true
+        run: .\gradlew.bat :shared:compileCommonMainKotlinMetadata --console=plain 2>&1 | Tee-Object -FilePath metadata.log; "EXIT=$LASTEXITCODE" | Tee-Object -Append metadata.log
+      - name: Итог
+        shell: pwsh
+        run: |
+          "compileDebugKotlinAndroid: " + (Select-String -Path android.log -Pattern "^EXIT=").Line
+          "compileCommonMainKotlinMetadata: " + (Select-String -Path metadata.log -Pattern "^EXIT=").Line
+          Select-String -Path android.log, metadata.log -Pattern "^e: |Unresolved|error:" | ForEach-Object { $_.Line }
+      - uses: actions/upload-artifact@v4
+        with: { name: common-java-logs, path: "*.log" }
+
+  ios-actual:
+    name: 3. expect/actual с NSDateFormatter в iosMain
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Добавить expect/actual formatPremiere
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force shared/src/androidMain/kotlin/ru/kmpcourse/kmp01 | Out-Null
+          @"
+          package ru.kmpcourse.kmp01
+
+          expect fun formatPremiere(premiere: Long): String
+          "@ | Set-Content shared/src/commonMain/kotlin/ru/kmpcourse/kmp01/Premiere.kt
+          @"
+          package ru.kmpcourse.kmp01
+
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+          import java.util.TimeZone
+
+          actual fun formatPremiere(premiere: Long): String {
+              val f = SimpleDateFormat("d MMMM yyyy", Locale("ru"))
+              f.timeZone = TimeZone.getTimeZone("UTC")
+              return f.format(Date(premiere))
+          }
+          "@ | Set-Content shared/src/androidMain/kotlin/ru/kmpcourse/kmp01/Premiere.android.kt
+          @"
+          package ru.kmpcourse.kmp01
+
+          import platform.Foundation.NSDate
+          import platform.Foundation.NSDateFormatter
+          import platform.Foundation.NSLocale
+          import platform.Foundation.NSTimeZone
+          import platform.Foundation.dateWithTimeIntervalSince1970
+          import platform.Foundation.timeZoneWithName
+
+          actual fun formatPremiere(premiere: Long): String {
+              val f = NSDateFormatter()
+              f.dateFormat = "d MMMM yyyy"
+              f.locale = NSLocale("ru_RU")
+              f.timeZone = NSTimeZone.timeZoneWithName("UTC")!!
+              return f.stringFromDate(NSDate.dateWithTimeIntervalSince1970(premiere / 1000.0))
+          }
+          "@ | Set-Content shared/src/iosMain/kotlin/ru/kmpcourse/kmp01/Premiere.ios.kt
+          @"
+          package ru.kmpcourse.kmp01
+
+          import kotlin.test.Test
+          import kotlin.test.assertEquals
+
+          class PremiereTest {
+              @Test
+              fun formatsRussianDate() = assertEquals("14 октября 1994", formatPremiere(782092800000L))
+          }
+          "@ | Set-Content shared/src/commonTest/kotlin/ru/kmpcourse/kmp01/PremiereTest.kt
+      - name: assembleDebug и тест — собирается ли Android, когда iosMain не компилируется на Windows
+        shell: pwsh
+        continue-on-error: true
+        run: .\gradlew.bat :androidApp:assembleDebug :shared:testAndroidHostTest --console=plain 2>&1 | Tee-Object -FilePath ios-actual.log; "EXIT=$LASTEXITCODE" | Tee-Object -Append ios-actual.log
+      - name: Итог
+        shell: pwsh
+        run: |
+          (Select-String -Path ios-actual.log -Pattern "^EXIT=").Line
+          Select-String -Path ios-actual.log -Pattern "^e: |Unresolved|FAILED|disabled|not supported" | ForEach-Object { $_.Line }
+      - uses: actions/upload-artifact@v4
+        with: { name: ios-actual-logs, path: "*.log" }
