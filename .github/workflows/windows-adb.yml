@@ -1,0 +1,92 @@
+# Разовая проверка команды адресного запуска превью из шпаргалки вечера 2 на Windows (PowerShell).
+# 1) без устройства — что PowerShell правильно разбирает команду; 2) с эмулятором — если он поднимется на раннере.
+name: Windows adb check
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci-windows-adb]
+
+jobs:
+  adb:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+
+      - name: Сборка debug APK
+        shell: pwsh
+        timeout-minutes: 20
+        run: .\gradlew.bat :androidApp:assembleDebug --console=plain
+
+      - name: SDK как у студента — platform-tools в %LOCALAPPDATA%\Android\Sdk
+        shell: pwsh
+        run: |
+          "ANDROID_HOME=$env:ANDROID_HOME"
+          $dst = "$env:LOCALAPPDATA\Android\Sdk\platform-tools"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Recurse -Force "$env:ANDROID_HOME\platform-tools\*" $dst
+          Get-ChildItem $dst | Select-Object -First 5 Name
+
+      - name: 1. Команда из шпаргалки без устройства (проверка разбора PowerShell)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" shell am start -n ru.kmpcourse.kmp01/androidx.compose.ui.tooling.PreviewActivity --es composable "ru.kmpcourse.kmp01.AppKt.App" 2>&1 | Tee-Object -FilePath adb-nodevice.log
+          "EXIT=$LASTEXITCODE" | Tee-Object -Append adb-nodevice.log
+
+      - name: Эмулятор — установка образа и создание AVD
+        shell: pwsh
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          $sdkm = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
+          $avdm = "$env:ANDROID_HOME\cmdline-tools\latest\bin\avdmanager.bat"
+          ("y`n" * 20) | & $sdkm --licenses | Out-Null
+          & $sdkm "emulator" "system-images;android-35;google_apis;x86_64" 2>&1 | Select-Object -Last 5
+          "no" | & $avdm create avd -n ci35 -k "system-images;android-35;google_apis;x86_64" -d pixel 2>&1 | Select-Object -Last 5
+          & "$env:ANDROID_HOME\emulator\emulator.exe" -accel-check 2>&1 | Tee-Object -FilePath accel.log
+
+      - name: Эмулятор — запуск и ожидание загрузки (до 10 минут)
+        shell: pwsh
+        timeout-minutes: 14
+        continue-on-error: true
+        run: |
+          $emu = "$env:ANDROID_HOME\emulator\emulator.exe"
+          Start-Process -FilePath $emu -ArgumentList "-avd ci35 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot" -RedirectStandardOutput emu-out.log -RedirectStandardError emu-err.log
+          $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+          $deadline = (Get-Date).AddMinutes(10); $booted = $false
+          while ((Get-Date) -lt $deadline) {
+            $b = (& $adb shell getprop sys.boot_completed 2>$null) -join ""
+            if ($b.Trim() -eq "1") { $booted = $true; break }
+            Start-Sleep -Seconds 15
+          }
+          "BOOTED=$booted" | Tee-Object -FilePath boot.log
+          & $adb devices | Tee-Object -Append boot.log
+
+      - name: 2. Команда из шпаргалки с эмулятором
+        shell: pwsh
+        timeout-minutes: 6
+        continue-on-error: true
+        run: |
+          $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+          & $adb install -r androidApp\build\outputs\apk\debug\androidApp-debug.apk 2>&1 | Tee-Object -FilePath adb-device.log
+          & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" shell am start -n ru.kmpcourse.kmp01/androidx.compose.ui.tooling.PreviewActivity --es composable "ru.kmpcourse.kmp01.AppKt.App" 2>&1 | Tee-Object -Append adb-device.log
+          "EXIT=$LASTEXITCODE" | Tee-Object -Append adb-device.log
+          Start-Sleep -Seconds 8
+          & $adb exec-out screencap -p > preview.png
+          & $adb shell dumpsys activity activities 2>&1 | Select-String "PreviewActivity" | Select-Object -First 3 | Tee-Object -Append adb-device.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adb-check
+          path: |
+            adb-nodevice.log
+            accel.log
+            emu-out.log
+            emu-err.log
+            boot.log
+            adb-device.log
+            preview.png
