@@ -48,9 +48,9 @@ jobs:
           "no" | & $avdm create avd -n ci35 -k "system-images;android-35;google_apis;x86_64" -d pixel 2>&1 | Select-Object -Last 5
           & "$env:ANDROID_HOME\emulator\emulator.exe" -accel-check 2>&1 | Tee-Object -FilePath accel.log
 
-      - name: Эмулятор — запуск и ожидание загрузки (до 10 минут)
+      - name: Эмулятор и команда из шпаргалки — в одном шаге (процессы шага на Windows завершаются вместе с ним)
         shell: pwsh
-        timeout-minutes: 14
+        timeout-minutes: 18
         continue-on-error: true
         run: |
           $emu = "$env:ANDROID_HOME\emulator\emulator.exe"
@@ -64,19 +64,14 @@ jobs:
           }
           "BOOTED=$booted" | Tee-Object -FilePath boot.log
           & $adb devices | Tee-Object -Append boot.log
-
-      - name: 2. Команда из шпаргалки с эмулятором
-        shell: pwsh
-        timeout-minutes: 6
-        continue-on-error: true
-        run: |
-          $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
           & $adb install -r androidApp\build\outputs\apk\debug\androidApp-debug.apk 2>&1 | Tee-Object -FilePath adb-device.log
+          # Команда из шпаргалки — дословно, только имя функции превью своё (в опубликованном коде есть App с @Preview):
           & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" shell am start -n ru.kmpcourse.kmp01/androidx.compose.ui.tooling.PreviewActivity --es composable "ru.kmpcourse.kmp01.AppKt.App" 2>&1 | Tee-Object -Append adb-device.log
           "EXIT=$LASTEXITCODE" | Tee-Object -Append adb-device.log
-          Start-Sleep -Seconds 8
-          & $adb exec-out screencap -p > preview.png
+          Start-Sleep -Seconds 10
           & $adb shell dumpsys activity activities 2>&1 | Select-String "PreviewActivity" | Select-Object -First 3 | Tee-Object -Append adb-device.log
+          & $adb shell screencap -p /sdcard/preview.png
+          & $adb pull /sdcard/preview.png preview.png 2>&1 | Tee-Object -Append adb-device.log
 
       - uses: actions/upload-artifact@v4
         if: always()
