@@ -39,9 +39,14 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm | tee kvm.log
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "emulator" "system-images;android-35;google_apis;x86_64" 2>&1 | tail -3
-          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n ci35 -k "system-images;android-35;google_apis;x86_64" -d pixel 2>&1 | tail -3
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          AVDM="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          ls -l "$SDKM" "$AVDM"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "emulator" "system-images;android-35;google_apis;x86_64" --sdk_root="$ANDROID_HOME" 2>&1 | tail -5
+          ls "$ANDROID_HOME/system-images/android-35/google_apis/" || echo "ОБРАЗ НЕ УСТАНОВЛЕН"
+          echo no | "$AVDM" create avd -n ci35 -k "system-images;android-35;google_apis;x86_64" --force 2>&1 | tail -10
+          echo "--- список AVD:"; "$ANDROID_HOME/emulator/emulator" -list-avds | tee -a kvm.log
           "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee -a kvm.log
 
       - name: 2. Эмулятор и команда из шпаргалки — в одном шаге
@@ -50,7 +55,7 @@ jobs:
         run: |
           ADB=~/Android/Sdk/platform-tools/adb
           nohup "$ANDROID_HOME/emulator/emulator" -avd ci35 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot > emu-out.log 2>&1 &
-          end=$((SECONDS+600)); booted=false
+          end=$((SECONDS+540)); booted=false
           while [ $SECONDS -lt $end ]; do
             if [ "$($ADB shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then booted=true; break; fi
             sleep 15
