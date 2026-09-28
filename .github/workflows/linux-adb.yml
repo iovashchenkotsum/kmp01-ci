@@ -45,7 +45,12 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" --install "emulator" "system-images;android-35;google_apis;x86_64" --sdk_root="$ANDROID_HOME" 2>&1 | tail -5
           ls "$ANDROID_HOME/system-images/android-35/google_apis/" || echo "ОБРАЗ НЕ УСТАНОВЛЕН"
-          echo no | "$AVDM" create avd -n ci35 -k "system-images;android-35;google_apis;x86_64" --force 2>&1 | tail -10
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME | ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-(пусто)} | ANDROID_USER_HOME=${ANDROID_USER_HOME:-(пусто)}"
+          echo no | "$AVDM" create avd -n ci35 -k "system-images;android-35;google_apis;x86_64" --force
+          echo "avdmanager exit=$?"
+          echo "--- где лежат .ini:"; find "$HOME/.android" -name "*.ini" -maxdepth 3 2>/dev/null | tee -a kvm.log
           echo "--- список AVD:"; "$ANDROID_HOME/emulator/emulator" -list-avds | tee -a kvm.log
           "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee -a kvm.log
 
@@ -53,6 +58,7 @@ jobs:
         timeout-minutes: 18
         continue-on-error: true
         run: |
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
           ADB=~/Android/Sdk/platform-tools/adb
           nohup "$ANDROID_HOME/emulator/emulator" -avd ci35 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot > emu-out.log 2>&1 &
           end=$((SECONDS+540)); booted=false
